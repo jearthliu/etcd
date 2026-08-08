@@ -79,6 +79,20 @@ func (s *watchableStore) watch(key, end []byte, startRev int64, id WatchID, ch c
 		s.unsynced.watchers[wa] = struct{}{}
 	}
 
+	// Re-verify compaction AFTER registration, still holding store.Mu. This
+	// closes the window where a compaction that advanced compactMainRev between
+	// the boundary check and the registration would otherwise leave a watcher
+	// registered with minRev <= compactMainRev — a "successful" watch that
+	// silently misses events at or before the compaction revision. If the
+	// revision was compacted, roll the registration back and fail with
+	// ErrCompacted so the caller can never observe a valid watch with a
+	// history gap.
+	if startRev != 0 && startRev <= s.store.compactMainRev {
+		delete(s.unsynced.watchers, wa)
+		delete(s.synced.watchers, wa)
+		return nil, ErrCompacted
+	}
+
 	return wa, nil
 }
 
